@@ -1,21 +1,45 @@
 pipeline {
     agent any
 
+    parameters {
+        choice(
+            name: 'DEPLOYMENT_ACTION',
+            choices: ['DEPLOY', 'ROLLBACK'],
+            description: 'Select deployment action'
+        )
+
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['UAT', 'PRODUCTION'],
+            description: 'Select environment'
+        )
+
+        string(
+            name: 'VERSION',
+            defaultValue: '4.2.1',
+            description: 'Version to deploy, for example 4.2.1'
+        )
+
+        choice(
+            name: 'CONFIRM_PROD',
+            choices: ['YES', 'NO'],
+            description: 'Production deployment confirmation'
+        )
+    }
+
+    environment {
+        DOCKER_EXE = 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
+        PREVIOUS_IMAGE = ''
+    }
+
     stages {
-
-        stage('Checkout') {
-            steps {
-
-                checkout scm
-            }
-        }
 
         stage('Show Parameters') {
             steps {
-                echo "Deployment Action: ${params.DEPLOYMENT_ACTION}"
-                echo "Environment: ${params.ENVIRONMENT}"
-                echo "Version: ${params.VERSION}"
-                echo "Production Confirmation: ${params.CONFIRM_PROD}"
+                echo "DEPLOYMENT_ACTION = ${params.DEPLOYMENT_ACTION}"
+                echo "ENVIRONMENT = ${params.ENVIRONMENT}"
+                echo "VERSION = ${params.VERSION}"
+                echo "CONFIRM_PROD = ${params.CONFIRM_PROD}"
             }
         }
 
@@ -24,10 +48,10 @@ pipeline {
                 script {
                     if (params.ENVIRONMENT == 'PRODUCTION' &&
                         params.CONFIRM_PROD != 'YES') {
-                        error("Production deployment blocked: CONFIRM_PROD must be YES")
+                        error('PRODUCTION deployment blocked: CONFIRM_PROD must be YES.')
                     }
 
-                    echo "Production validation passed."
+                    echo 'Production validation passed.'
                 }
             }
         }
@@ -35,9 +59,9 @@ pipeline {
         stage('Validate Version') {
             steps {
                 powershell """
+                    & "\${env:DOCKER_EXE}" --version
                     git fetch --tags --force
-                    git rev-parse "refs/tags/v${params.VERSION}^{commit}"
-                    Write-Host "Version tag v${params.VERSION} exists."
+                    git rev-parse "refs/tags/v${params.VERSION}"
                 """
             }
         }
@@ -45,135 +69,123 @@ pipeline {
         stage('Checkout Selected Version') {
             steps {
                 powershell """
-                    git checkout "tags/v${params.VERSION}"
-
-                    Write-Host "Selected Git commit:"
-                    git rev-parse HEAD
+                    git checkout "v${params.VERSION}"
+                    git log -1 --oneline
                 """
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' build -t retail-app:${params.VERSION}-${env.BUILD_NUMBER} .
-                """
+                script {
+                    def buildNumber = env.BUILD_NUMBER
+                    def imageTag = "retail-app:${params.VERSION}-${buildNumber}"
+
+                    env.IMAGE_TAG = imageTag
+
+                    echo "Building Docker image: ${imageTag}"
+
+                    powershell """
+                        & "\${env:DOCKER_EXE}" build -t "${imageTag}" .
+                    """
+
+                    echo "Docker image created: ${imageTag}"
+                }
             }
         }
 
         stage('Prepare Docker Network') {
             steps {
                 powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network inspect retail-network
-
-                    if (\\$LASTEXITCODE -ne 0) {
-                        & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network create retail-network
-                    }
+                    & "\${env:DOCKER_EXE}" network create retail-network 2>NUL
+                    exit 0
                 """
             }
         }
 
-        stage('Record Previous Production') {
+        stage('Record Previous Production Image') {
             steps {
                 powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect retail-app-prod --format="{{.Config.Image}}"
-
-                    if (\\$LASTEXITCODE -eq 0) {
-                        \\$previousImage = & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect retail-app-prod --format="{{.Config.Image}}"
-                        Write-Host "Previous production image: \\$previousImage"
-                        Set-Content -Path previous-production-image.txt -Value \\$previousImage
-                    }
-                    else {
-                        Write-Host "No previous production container found."
-                        Set-Content -Path previous-production-image.txt -Value ""
-                    }
+                    & "\${env:DOCKER_EXE}" inspect retail-app-prod --format="{{.Config.Image}}" > previous-production-image.txt 2>NUL
                 """
+
+                script {
+                    if (fileExists('previous-production-image.txt')) {
+                        env.PREVIOUS_IMAGE =
+                            readFile('previous-production-image.txt').trim()
+                    }
+
+                    if (env.PREVIOUS_IMAGE) {
+                        echo "Previous production image: ${env.PREVIOUS_IMAGE}"
+                    } else {
+                        echo "No previous production image found."
+                    }
+                }
             }
         }
 
         stage('Start Candidate') {
             steps {
-                powershell """
-                    Write-Host "Starting new version before removing old version..."
+                script {
+                    def healthFail = 'false'
 
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate
-
-                    \\$healthFail = "false"
-
-                    if ("${params.VERSION}" -eq "4.2.2") {
-                        \\$healthFail = "true"
+                    if (params.VERSION == '4.2.2') {
+                        healthFail = 'true'
+                        echo 'FAILURE INJECTION ENABLED for v4.2.2'
                     }
 
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' run -d `
-                        --name retail-app-candidate `
-                        --network retail-network `
-                        -p 8082:8081 `
-                        -e APP_VERSION=${params.VERSION} `
-                        -e ENVIRONMENT=${params.ENVIRONMENT} `
-                        -e HEALTH_FAIL=\\$healthFail `
-                        retail-app:${params.VERSION}-${env.BUILD_NUMBER}
+                    powershell """
+                        & "\${env:DOCKER_EXE}" rm -f retail-app-candidate 2>NUL
 
-                    Write-Host "Candidate container started."
-                    Write-Host "Candidate version: ${params.VERSION}"
-                """
+                        & "\${env:DOCKER_EXE}" run -d `
+                            --name retail-app-candidate `
+                            --network retail-network `
+                            -p 8082:8081 `
+                            -e APP_VERSION=${params.VERSION} `
+                            -e ENVIRONMENT=${params.ENVIRONMENT} `
+                            -e HEALTH_FAIL=${healthFail} `
+                            ${env.IMAGE_TAG}
+                    """
+                }
             }
         }
 
         stage('Candidate Health Check') {
             steps {
                 script {
-                    def healthy = false
+                    sleep(time: 10, unit: 'SECONDS')
 
-                    for (int i = 1; i <= 12; i++) {
-                        def status = powershell(
-                            returnStdout: true,
-                            script: """
-                                & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect --format="{{.State.Health.Status}}" retail-app-candidate
-                            """
-                        ).trim()
+                    def candidateHealth = powershell(
+                        returnStdout: true,
+                        script: """
+                            & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-candidate
+                        """
+                    ).trim()
 
-                        echo "Candidate health status: ${status}"
+                    echo "Candidate health status: ${candidateHealth}"
 
-                        if (status == "healthy") {
-                            healthy = true
-                            break
-                        }
-
-                        if (status == "unhealthy") {
-                            break
-                        }
-
-                        sleep(time: 5, unit: 'SECONDS')
+                    if (candidateHealth != 'healthy') {
+                        error("Candidate health check FAILED: ${candidateHealth}")
                     }
 
-                    if (!healthy) {
-                        echo "NEW VERSION FAILED HEALTH CHECK."
-                        error("Candidate deployment failed. Rollback required.")
-                    }
+                    echo 'Candidate health check PASSED.'
                 }
             }
         }
 
-        stage('Switch Production') {
+        stage('Deploy New Version') {
             steps {
                 powershell """
-                    Write-Host "Candidate is healthy."
-                    Write-Host "Switching production to new version..."
+                    & "\${env:DOCKER_EXE}" rm -f retail-app-prod 2>NUL
 
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' stop retail-app-prod
-
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm retail-app-prod
-
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' run -d `
+                    & "\${env:DOCKER_EXE}" run -d `
                         --name retail-app-prod `
                         --network retail-network `
                         -p 8081:8081 `
                         -e APP_VERSION=${params.VERSION} `
                         -e ENVIRONMENT=${params.ENVIRONMENT} `
                         -e HEALTH_FAIL=false `
-                        retail-app:${params.VERSION}-${env.BUILD_NUMBER}
-
-                    Write-Host "New production container started."
+                        ${env.IMAGE_TAG}
                 """
             }
         }
@@ -181,110 +193,99 @@ pipeline {
         stage('Production Health Check') {
             steps {
                 script {
-                    def healthy = false
+                    sleep(time: 10, unit: 'SECONDS')
 
-                    for (int i = 1; i <= 12; i++) {
-                        def status = powershell(
-                            returnStdout: true,
-                            script: """
-                                & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect --format="{{.State.Health.Status}}" retail-app-prod
-                            """
-                        ).trim()
+                    def productionHealth = powershell(
+                        returnStdout: true,
+                        script: """
+                            & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-prod
+                        """
+                    ).trim()
 
-                        echo "Production health status: ${status}"
+                    echo "Production health status: ${productionHealth}"
 
-                        if (status == "healthy") {
-                            healthy = true
-                            break
-                        }
-
-                        if (status == "unhealthy") {
-                            break
-                        }
-
-                        sleep(time: 5, unit: 'SECONDS')
+                    if (productionHealth != 'healthy') {
+                        error("Production health check FAILED: ${productionHealth}")
                     }
 
-                    if (!healthy) {
-                        error("Production health check failed.")
-                    }
+                    echo 'Production health check PASSED.'
                 }
             }
         }
 
-        stage('Cleanup Candidate') {
+        stage('Remove Candidate') {
             steps {
                 powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate
-                    Write-Host "Old candidate container removed."
+                    & "\${env:DOCKER_EXE}" rm -f retail-app-candidate 2>NUL
                 """
             }
         }
 
-        stage('Deployment Status') {
+        stage('Final Status') {
             steps {
-                powershell """
-                    Write-Host "========== FINAL DEPLOYMENT STATE =========="
-
-                    Write-Host "Previous production image:"
-                    Get-Content previous-production-image.txt
-
-                    Write-Host "New production image:"
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect --format="{{.Config.Image}}" retail-app-prod
-
-                    Write-Host "Running containers:"
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' ps
-
-                    Write-Host "Production health:"
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect --format="{{.State.Health.Status}}" retail-app-prod
-                """
+                echo "Deployment completed successfully."
+                echo "Version deployed: ${params.VERSION}"
+                echo "Docker image: ${env.IMAGE_TAG}"
+                echo "Environment: ${params.ENVIRONMENT}"
+                echo "Final status: SUCCESS"
             }
         }
     }
 
     post {
-
         failure {
-            powershell """
-                Write-Host "========== AUTOMATIC ROLLBACK =========="
+            script {
+                echo 'DEPLOYMENT FAILED.'
+                echo 'Starting automatic rollback.'
 
-                & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate
+                powershell """
+                    & "\${env:DOCKER_EXE}" rm -f retail-app-candidate 2>NUL
+                """
 
-                if (Test-Path previous-production-image.txt) {
-                    \\$previousImage = Get-Content previous-production-image.txt
+                if (env.PREVIOUS_IMAGE?.trim()) {
 
-                    if (\\$previousImage -and \\$previousImage.Trim() -ne "") {
-                        Write-Host "Restoring previous production image: \\$previousImage"
+                    echo "Restoring previous production image: ${env.PREVIOUS_IMAGE}"
 
-                        & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-prod
+                    powershell """
+                        & "\${env:DOCKER_EXE}" rm -f retail-app-prod 2>NUL
 
-                        & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' run -d `
+                        & "\${env:DOCKER_EXE}" run -d `
                             --name retail-app-prod `
                             --network retail-network `
                             -p 8081:8081 `
                             -e APP_VERSION=4.2.1 `
                             -e ENVIRONMENT=PRODUCTION `
                             -e HEALTH_FAIL=false `
-                            \\$previousImage
+                            ${env.PREVIOUS_IMAGE}
+                    """
 
-                        Start-Sleep -Seconds 10
+                    sleep(time: 10, unit: 'SECONDS')
 
-                        \\$health = & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect --format="{{.State.Health.Status}}" retail-app-prod
+                    def rollbackHealth = powershell(
+                        returnStdout: true,
+                        script: """
+                            & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-prod
+                        """
+                    ).trim()
 
-                        Write-Host "Rollback health status: \\$health"
+                    echo "Rollback health status: ${rollbackHealth}"
 
-                        if (\\$health.Trim() -eq "healthy") {
-                            Write-Host "ROLLBACK VERIFIED: previous production image is healthy."
-                        }
-                        else {
-                            Write-Host "ROLLBACK HEALTH CHECK FAILED."
-                        }
+                    if (rollbackHealth == 'healthy') {
+                        echo 'ROLLBACK VERIFIED: previous production image is healthy.'
+                    } else {
+                        echo 'ROLLBACK HEALTH CHECK FAILED.'
                     }
-                    else {
-                        Write-Host "No previous production image was recorded."
-                    }
+
+                } else {
+                    echo 'No previous production image was recorded. Rollback cannot be performed.'
                 }
-            """
+
+                echo 'Final status: FAILED'
+            }
+        }
+
+        success {
+            echo 'Final status: SUCCESS'
         }
     }
 }
