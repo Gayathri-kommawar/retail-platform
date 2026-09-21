@@ -141,7 +141,6 @@ pipeline {
             steps {
                 script {
                     def imageTag = readFile('image-tag.txt').trim()
-
                     def healthFail = 'false'
 
                     if (params.VERSION == '4.2.2') {
@@ -173,22 +172,33 @@ pipeline {
         stage('Candidate Health Check') {
             steps {
                 script {
-                    sleep(time: 10, unit: 'SECONDS')
+                    def candidateHealth = 'starting'
 
-                    def candidateHealth = powershell(
-                        returnStdout: true,
-                        script: """
-                            & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-candidate
-                        """
-                    ).trim()
+                    for (int i = 1; i <= 6; i++) {
+                        sleep(time: 5, unit: 'SECONDS')
 
-                    echo "Candidate health status: ${candidateHealth}"
+                        candidateHealth = powershell(
+                            returnStdout: true,
+                            script: """
+                                & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-candidate
+                            """
+                        ).trim()
+
+                        echo "Candidate health check ${i}/6: ${candidateHealth}"
+
+                        if (candidateHealth == 'healthy') {
+                            echo 'Candidate health check PASSED.'
+                            break
+                        }
+
+                        if (candidateHealth == 'unhealthy') {
+                            error("Candidate health check FAILED: ${candidateHealth}")
+                        }
+                    }
 
                     if (candidateHealth != 'healthy') {
                         error("Candidate health check FAILED: ${candidateHealth}")
                     }
-
-                    echo 'Candidate health check PASSED.'
                 }
             }
         }
@@ -219,39 +229,39 @@ pipeline {
             }
         }
 
-        stage('Candidate Health Check') {
-    steps {
-        script {
-            def candidateHealth = 'starting'
+        stage('Production Health Check') {
+            steps {
+                script {
+                    def productionHealth = 'starting'
 
-            for (int i = 1; i <= 6; i++) {
-                sleep(time: 5, unit: 'SECONDS')
+                    for (int i = 1; i <= 6; i++) {
+                        sleep(time: 5, unit: 'SECONDS')
 
-                candidateHealth = powershell(
-                    returnStdout: true,
-                    script: """
-                        & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-candidate
-                    """
-                ).trim()
+                        productionHealth = powershell(
+                            returnStdout: true,
+                            script: """
+                                & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-prod
+                            """
+                        ).trim()
 
-                echo "Candidate health check ${i}/6: ${candidateHealth}"
+                        echo "Production health check ${i}/6: ${productionHealth}"
 
-                if (candidateHealth == 'healthy') {
-                    echo 'Candidate health check PASSED.'
-                    break
+                        if (productionHealth == 'healthy') {
+                            echo 'Production health check PASSED.'
+                            break
+                        }
+
+                        if (productionHealth == 'unhealthy') {
+                            error("Production health check FAILED: ${productionHealth}")
+                        }
+                    }
+
+                    if (productionHealth != 'healthy') {
+                        error("Production health check FAILED: ${productionHealth}")
+                    }
                 }
-
-                if (candidateHealth == 'unhealthy') {
-                    error("Candidate health check FAILED: ${candidateHealth}")
-                }
-            }
-
-            if (candidateHealth != 'healthy') {
-                error("Candidate health check FAILED: ${candidateHealth}")
             }
         }
-    }
-}
 
         stage('Remove Candidate') {
             steps {
@@ -309,16 +319,24 @@ pipeline {
                             ${env.PREVIOUS_IMAGE}
                     """
 
-                    sleep(time: 10, unit: 'SECONDS')
+                    def rollbackHealth = 'starting'
 
-                    def rollbackHealth = powershell(
-                        returnStdout: true,
-                        script: """
-                            & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-prod
-                        """
-                    ).trim()
+                    for (int i = 1; i <= 6; i++) {
+                        sleep(time: 5, unit: 'SECONDS')
 
-                    echo "Rollback health status: ${rollbackHealth}"
+                        rollbackHealth = powershell(
+                            returnStdout: true,
+                            script: """
+                                & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-prod
+                            """
+                        ).trim()
+
+                        echo "Rollback health check ${i}/6: ${rollbackHealth}"
+
+                        if (rollbackHealth == 'healthy') {
+                            break
+                        }
+                    }
 
                     if (rollbackHealth == 'healthy') {
                         echo '======================================'
@@ -330,7 +348,6 @@ pipeline {
                     }
 
                 } else {
-
                     echo 'No previous production image exists.'
                     echo 'This was the first deployment, so there is nothing to rollback to.'
                 }
