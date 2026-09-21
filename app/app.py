@@ -12,7 +12,7 @@ def home():
     <h1>Retail Platform</h1>
     <p>Version: {VERSION}</p>
     <p>Environment: {ENVIRONMENT}</p>
-    <p>Payment Status: Working</p>
+    <p>Payment Status: Hotfix Applied</p>
     <p>Feature: Product Catalog Enabled</p>
     <p>Feature: Order Tracking Enabled</p>
     """
@@ -23,3 +23,4 @@ def health():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8081)
+
