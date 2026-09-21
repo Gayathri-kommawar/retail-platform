@@ -14,6 +14,7 @@ def home():
     <p>Environment: {ENVIRONMENT}</p>
     <p>Payment Status: Working</p>
     <p>Feature: Product Catalog Enabled</p>
+    <p>Feature: Order Tracking Enabled</p>
     """
 
 @app.route("/health")
