@@ -1,0 +1,15 @@
+services:
+  retail-app:
+    image: retail-app:4.2.0
+    container_name: retail-app-compose
+    ports:
+      - "8081:8081"
+    environment:
+      APP_VERSION: "4.2.0"
+      ENVIRONMENT: "UAT"
+    networks:
+      - retail-network
+
+networks:
+  retail-network:
+    external: true
