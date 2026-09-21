@@ -30,6 +30,7 @@ pipeline {
     environment {
         DOCKER_EXE = 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
         PREVIOUS_IMAGE = ''
+        IMAGE_TAG = ''
     }
 
     stages {
@@ -79,17 +80,15 @@ pipeline {
             steps {
                 script {
                     def buildNumber = env.BUILD_NUMBER
-                    def imageTag = "retail-app:${params.VERSION}-${buildNumber}"
+                    env.IMAGE_TAG = "retail-app:${params.VERSION}-${buildNumber}"
 
-                    env.IMAGE_TAG = imageTag
-
-                    echo "Building Docker image: ${imageTag}"
+                    echo "Building Docker image: ${env.IMAGE_TAG}"
 
                     powershell """
-                        & "\${env:DOCKER_EXE}" build -t "${imageTag}" .
+                        & "\${env:DOCKER_EXE}" build -t "${env.IMAGE_TAG}" .
                     """
 
-                    echo "Docker image created: ${imageTag}"
+                    echo "Docker image created: ${env.IMAGE_TAG}"
                 }
             }
         }
@@ -97,7 +96,16 @@ pipeline {
         stage('Prepare Docker Network') {
             steps {
                 powershell """
-                    & "\${env:DOCKER_EXE}" network create retail-network 2>NUL
+                    & "\${env:DOCKER_EXE}" network inspect retail-network
+
+                    if (\$LASTEXITCODE -ne 0) {
+                        Write-Host "Docker network does not exist. Creating it..."
+                        & "\${env:DOCKER_EXE}" network create retail-network
+                    }
+                    else {
+                        Write-Host "Docker network retail-network already exists."
+                    }
+
                     exit 0
                 """
             }
@@ -105,19 +113,19 @@ pipeline {
 
         stage('Record Previous Production Image') {
             steps {
-                powershell """
-                    & "\${env:DOCKER_EXE}" inspect retail-app-prod --format="{{.Config.Image}}" > previous-production-image.txt 2>NUL
-                """
-
                 script {
-                    if (fileExists('previous-production-image.txt')) {
-                        env.PREVIOUS_IMAGE =
-                            readFile('previous-production-image.txt').trim()
-                    }
+                    def result = powershell(
+                        returnStdout: true,
+                        script: """
+                            & "\${env:DOCKER_EXE}" inspect retail-app-prod --format="{{.Config.Image}}"
+                        """
+                    ).trim()
 
-                    if (env.PREVIOUS_IMAGE) {
+                    if (result) {
+                        env.PREVIOUS_IMAGE = result
                         echo "Previous production image: ${env.PREVIOUS_IMAGE}"
                     } else {
+                        env.PREVIOUS_IMAGE = ''
                         echo "No previous production image found."
                     }
                 }
@@ -135,7 +143,7 @@ pipeline {
                     }
 
                     powershell """
-                        & "\${env:DOCKER_EXE}" rm -f retail-app-candidate 2>NUL
+                        & "\${env:DOCKER_EXE}" rm -f retail-app-candidate
 
                         & "\${env:DOCKER_EXE}" run -d `
                             --name retail-app-candidate `
@@ -145,6 +153,8 @@ pipeline {
                             -e ENVIRONMENT=${params.ENVIRONMENT} `
                             -e HEALTH_FAIL=${healthFail} `
                             ${env.IMAGE_TAG}
+
+                        exit 0
                     """
                 }
             }
@@ -176,7 +186,7 @@ pipeline {
         stage('Deploy New Version') {
             steps {
                 powershell """
-                    & "\${env:DOCKER_EXE}" rm -f retail-app-prod 2>NUL
+                    & "\${env:DOCKER_EXE}" rm -f retail-app-prod
 
                     & "\${env:DOCKER_EXE}" run -d `
                         --name retail-app-prod `
@@ -186,6 +196,8 @@ pipeline {
                         -e ENVIRONMENT=${params.ENVIRONMENT} `
                         -e HEALTH_FAIL=false `
                         ${env.IMAGE_TAG}
+
+                    exit 0
                 """
             }
         }
@@ -216,30 +228,36 @@ pipeline {
         stage('Remove Candidate') {
             steps {
                 powershell """
-                    & "\${env:DOCKER_EXE}" rm -f retail-app-candidate 2>NUL
+                    & "\${env:DOCKER_EXE}" rm -f retail-app-candidate
+                    exit 0
                 """
             }
         }
 
         stage('Final Status') {
             steps {
-                echo "Deployment completed successfully."
+                echo 'Deployment completed successfully.'
                 echo "Version deployed: ${params.VERSION}"
                 echo "Docker image: ${env.IMAGE_TAG}"
                 echo "Environment: ${params.ENVIRONMENT}"
-                echo "Final status: SUCCESS"
+                echo 'Final status: SUCCESS'
             }
         }
     }
 
     post {
+
         failure {
             script {
-                echo 'DEPLOYMENT FAILED.'
-                echo 'Starting automatic rollback.'
+
+                echo '======================================'
+                echo 'DEPLOYMENT FAILED'
+                echo 'STARTING AUTOMATIC ROLLBACK'
+                echo '======================================'
 
                 powershell """
-                    & "\${env:DOCKER_EXE}" rm -f retail-app-candidate 2>NUL
+                    & "\${env:DOCKER_EXE}" rm -f retail-app-candidate
+                    exit 0
                 """
 
                 if (env.PREVIOUS_IMAGE?.trim()) {
@@ -247,7 +265,7 @@ pipeline {
                     echo "Restoring previous production image: ${env.PREVIOUS_IMAGE}"
 
                     powershell """
-                        & "\${env:DOCKER_EXE}" rm -f retail-app-prod 2>NUL
+                        & "\${env:DOCKER_EXE}" rm -f retail-app-prod
 
                         & "\${env:DOCKER_EXE}" run -d `
                             --name retail-app-prod `
@@ -257,6 +275,8 @@ pipeline {
                             -e ENVIRONMENT=PRODUCTION `
                             -e HEALTH_FAIL=false `
                             ${env.PREVIOUS_IMAGE}
+
+                        exit 0
                     """
 
                     sleep(time: 10, unit: 'SECONDS')
@@ -271,13 +291,20 @@ pipeline {
                     echo "Rollback health status: ${rollbackHealth}"
 
                     if (rollbackHealth == 'healthy') {
-                        echo 'ROLLBACK VERIFIED: previous production image is healthy.'
+                        echo '======================================'
+                        echo 'ROLLBACK VERIFIED'
+                        echo 'Previous production image is HEALTHY'
+                        echo '======================================'
                     } else {
-                        echo 'ROLLBACK HEALTH CHECK FAILED.'
+                        echo '======================================'
+                        echo 'ROLLBACK HEALTH CHECK FAILED'
+                        echo '======================================'
                     }
 
                 } else {
-                    echo 'No previous production image was recorded. Rollback cannot be performed.'
+
+                    echo 'No previous production image was recorded.'
+                    echo 'Rollback cannot be performed.'
                 }
 
                 echo 'Final status: FAILED'
@@ -285,7 +312,9 @@ pipeline {
         }
 
         success {
-            echo 'Final status: SUCCESS'
+            echo '======================================'
+            echo 'FINAL STATUS: SUCCESS'
+            echo '======================================'
         }
     }
 }
