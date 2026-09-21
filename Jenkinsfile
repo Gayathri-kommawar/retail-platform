@@ -58,17 +58,17 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 powershell """
-                    & "$env:DOCKER_PATH\\docker.exe" build -t retail-app:${params.VERSION}-${env.BUILD_NUMBER} .
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' build -t retail-app:${params.VERSION}-${env.BUILD_NUMBER} .
                 """
             }
         }
 
         stage('Show Docker Image') {
-            steps {
-                powershell """
-                    & "$env:DOCKER_PATH\\docker.exe" images retail-app
-                """
-            }
-        }
+           steps {
+              powershell """
+                 & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' images retail-app
+        """
+    }
+}
     }
 }
