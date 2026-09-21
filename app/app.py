@@ -13,6 +13,7 @@ def home():
     <p>Version: {VERSION}</p>
     <p>Environment: {ENVIRONMENT}</p>
     <p>Payment Status: Working</p>
+    <p>Feature: Product Catalog Enabled</p>
     """
 
 @app.route("/health")
