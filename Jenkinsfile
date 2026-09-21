@@ -219,28 +219,39 @@ pipeline {
             }
         }
 
-        stage('Production Health Check') {
-            steps {
-                script {
-                    sleep(time: 10, unit: 'SECONDS')
+        stage('Candidate Health Check') {
+    steps {
+        script {
+            def candidateHealth = 'starting'
 
-                    def productionHealth = powershell(
-                        returnStdout: true,
-                        script: """
-                            & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-prod
-                        """
-                    ).trim()
+            for (int i = 1; i <= 6; i++) {
+                sleep(time: 5, unit: 'SECONDS')
 
-                    echo "Production health status: ${productionHealth}"
+                candidateHealth = powershell(
+                    returnStdout: true,
+                    script: """
+                        & "\${env:DOCKER_EXE}" inspect --format="{{.State.Health.Status}}" retail-app-candidate
+                    """
+                ).trim()
 
-                    if (productionHealth != 'healthy') {
-                        error("Production health check FAILED: ${productionHealth}")
-                    }
+                echo "Candidate health check ${i}/6: ${candidateHealth}"
 
-                    echo 'Production health check PASSED.'
+                if (candidateHealth == 'healthy') {
+                    echo 'Candidate health check PASSED.'
+                    break
+                }
+
+                if (candidateHealth == 'unhealthy') {
+                    error("Candidate health check FAILED: ${candidateHealth}")
                 }
             }
+
+            if (candidateHealth != 'healthy') {
+                error("Candidate health check FAILED: ${candidateHealth}")
+            }
         }
+    }
+}
 
         stage('Remove Candidate') {
             steps {
