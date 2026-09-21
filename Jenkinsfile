@@ -5,7 +5,7 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                
+
                 checkout scm
             }
         }
@@ -64,7 +64,7 @@ pipeline {
         stage('Prepare Docker Network') {
             steps {
                 powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network inspect retail-network 2>\\$null
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network inspect retail-network
 
                     if (\\$LASTEXITCODE -ne 0) {
                         & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network create retail-network
@@ -76,7 +76,7 @@ pipeline {
         stage('Record Previous Production') {
             steps {
                 powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect retail-app-prod --format="{{.Config.Image}}" 2>\\$null
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect retail-app-prod --format="{{.Config.Image}}"
 
                     if (\\$LASTEXITCODE -eq 0) {
                         \\$previousImage = & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect retail-app-prod --format="{{.Config.Image}}"
@@ -96,7 +96,7 @@ pipeline {
                 powershell """
                     Write-Host "Starting new version before removing old version..."
 
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate 2>\\$null
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate
 
                     \\$healthFail = "false"
 
@@ -160,9 +160,9 @@ pipeline {
                     Write-Host "Candidate is healthy."
                     Write-Host "Switching production to new version..."
 
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' stop retail-app-prod 2>\\$null
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' stop retail-app-prod
 
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm retail-app-prod 2>\\$null
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm retail-app-prod
 
                     & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' run -d `
                         --name retail-app-prod `
@@ -215,7 +215,7 @@ pipeline {
         stage('Cleanup Candidate') {
             steps {
                 powershell """
-                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate 2>\\$null
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate
                     Write-Host "Old candidate container removed."
                 """
             }
@@ -248,7 +248,7 @@ pipeline {
             powershell """
                 Write-Host "========== AUTOMATIC ROLLBACK =========="
 
-                & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate 2>\\$null
+                & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-candidate
 
                 if (Test-Path previous-production-image.txt) {
                     \\$previousImage = Get-Content previous-production-image.txt
@@ -256,7 +256,7 @@ pipeline {
                     if (\\$previousImage -and \\$previousImage.Trim() -ne "") {
                         Write-Host "Restoring previous production image: \\$previousImage"
 
-                        & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-prod 2>\\$null
+                        & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-prod
 
                         & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' run -d `
                             --name retail-app-prod `
