@@ -29,7 +29,6 @@ pipeline {
 
     environment {
         DOCKER_EXE = 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
-        PREVIOUS_IMAGE = ''
     }
 
     stages {
@@ -127,10 +126,21 @@ pipeline {
                     ).trim()
 
                     if (previousImage) {
-                        env.PREVIOUS_IMAGE = previousImage
+
+                        writeFile(
+                            file: 'previous-image.txt',
+                            text: previousImage
+                        )
+
                         echo "Previous production image: ${previousImage}"
+
                     } else {
-                        env.PREVIOUS_IMAGE = ''
+
+                        writeFile(
+                            file: 'previous-image.txt',
+                            text: ''
+                        )
+
                         echo "No previous production container found. This is the first deployment."
                     }
                 }
@@ -299,9 +309,13 @@ pipeline {
                     exit 0
                 """
 
-                if (env.PREVIOUS_IMAGE?.trim()) {
+                def previousImage = fileExists('previous-image.txt')
+                    ? readFile('previous-image.txt').trim()
+                    : ''
 
-                    echo "Restoring previous production image: ${env.PREVIOUS_IMAGE}"
+                if (previousImage) {
+
+                    echo "Restoring previous production image: ${previousImage}"
 
                     powershell """
                         & "\${env:DOCKER_EXE}" rm -f retail-app-prod
@@ -316,7 +330,7 @@ pipeline {
                             -e APP_VERSION=4.2.1 `
                             -e ENVIRONMENT=PRODUCTION `
                             -e HEALTH_FAIL=false `
-                            ${env.PREVIOUS_IMAGE}
+                            ${previousImage}
                     """
 
                     def rollbackHealth = 'starting'
@@ -339,15 +353,20 @@ pipeline {
                     }
 
                     if (rollbackHealth == 'healthy') {
+
                         echo '======================================'
                         echo 'ROLLBACK VERIFIED'
                         echo 'Previous production image is HEALTHY'
+                        echo "Restored image: ${previousImage}"
                         echo '======================================'
+
                     } else {
+
                         echo 'ROLLBACK HEALTH CHECK FAILED.'
                     }
 
                 } else {
+
                     echo 'No previous production image exists.'
                     echo 'This was the first deployment, so there is nothing to rollback to.'
                 }
