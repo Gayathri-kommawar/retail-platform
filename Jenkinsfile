@@ -64,11 +64,73 @@ pipeline {
         }
 
         stage('Show Docker Image') {
-           steps {
-              powershell """
-                 & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' images retail-app
-        """
-    }
-}
+            steps {
+                powershell """
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' images retail-app
+                """
+            }
+        }
+
+        stage('Prepare Docker Network') {
+            steps {
+                powershell """
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network inspect retail-network 2>\\$null
+                    if (\\$LASTEXITCODE -ne 0) {
+                        & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' network create retail-network
+                    }
+                """
+            }
+        }
+
+        stage('Deploy Container') {
+            steps {
+                powershell """
+                    Write-Host "Starting deployment..."
+
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' rm -f retail-app-prod 2>\\$null
+
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' run -d `
+                        --name retail-app-prod `
+                        --network retail-network `
+                        -p 8081:8081 `
+                        -e APP_VERSION=${params.VERSION} `
+                        -e ENVIRONMENT=${params.ENVIRONMENT} `
+                        retail-app:${params.VERSION}-${env.BUILD_NUMBER}
+
+                    Write-Host "New container started."
+                """
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                powershell """
+                    Write-Host "Waiting for application..."
+
+                    Start-Sleep -Seconds 10
+
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect --format="{{.State.Health.Status}}" retail-app-prod
+
+                    if (\\$LASTEXITCODE -ne 0) {
+                        Write-Host "Health check failed."
+                        exit 1
+                    }
+
+                    Write-Host "Health check completed."
+                """
+            }
+        }
+
+        stage('Deployment Status') {
+            steps {
+                powershell """
+                    Write-Host "Running container:"
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' ps
+
+                    Write-Host "Container details:"
+                    & 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe' inspect retail-app-prod
+                """
+            }
+        }
     }
 }
