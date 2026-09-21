@@ -12,7 +12,7 @@ def home():
     <h1>Retail Platform</h1>
     <p>Version: {VERSION}</p>
     <p>Environment: {ENVIRONMENT}</p>
-    <p>Payment Status: Working</p>
+    <p>Payment Status: Hotfix Applied</p>
     """
 
 @app.route("/health")
