@@ -17,7 +17,7 @@ pipeline {
         string(
             name: 'VERSION',
             defaultValue: '4.2.1',
-            description: 'Version to deploy, for example 4.2.1'
+            description: 'Version to deploy'
         )
 
         choice(
@@ -30,7 +30,6 @@ pipeline {
     environment {
         DOCKER_EXE = 'C:\\Users\\gayat\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
         PREVIOUS_IMAGE = ''
-        IMAGE_TAG = ''
     }
 
     stages {
@@ -72,6 +71,7 @@ pipeline {
                 powershell """
                     git checkout "v${params.VERSION}"
                     git log -1 --oneline
+                    exit 0
                 """
             }
         }
@@ -79,16 +79,20 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    def buildNumber = env.BUILD_NUMBER
-                    env.IMAGE_TAG = "retail-app:${params.VERSION}-${buildNumber}"
+                    def imageTag = "retail-app:${params.VERSION}-${env.BUILD_NUMBER}"
 
-                    echo "Building Docker image: ${env.IMAGE_TAG}"
+                    echo "Building Docker image: ${imageTag}"
 
                     powershell """
-                        & "\${env:DOCKER_EXE}" build -t "${env.IMAGE_TAG}" .
+                        & "\${env:DOCKER_EXE}" build -t "${imageTag}" .
                     """
 
-                    echo "Docker image created: ${env.IMAGE_TAG}"
+                    writeFile(
+                        file: 'image-tag.txt',
+                        text: imageTag
+                    )
+
+                    echo "Docker image created: ${imageTag}"
                 }
             }
         }
@@ -114,19 +118,20 @@ pipeline {
         stage('Record Previous Production Image') {
             steps {
                 script {
-                    def result = powershell(
+                    def previousImage = powershell(
                         returnStdout: true,
                         script: """
-                            & "\${env:DOCKER_EXE}" inspect retail-app-prod --format="{{.Config.Image}}"
+                            & "\${env:DOCKER_EXE}" ps -a --filter "name=retail-app-prod" --format "{{.Image}}"
+                            exit 0
                         """
                     ).trim()
 
-                    if (result) {
-                        env.PREVIOUS_IMAGE = result
-                        echo "Previous production image: ${env.PREVIOUS_IMAGE}"
+                    if (previousImage) {
+                        env.PREVIOUS_IMAGE = previousImage
+                        echo "Previous production image: ${previousImage}"
                     } else {
                         env.PREVIOUS_IMAGE = ''
-                        echo "No previous production image found."
+                        echo "No previous production container found. This is the first deployment."
                     }
                 }
             }
@@ -135,6 +140,8 @@ pipeline {
         stage('Start Candidate') {
             steps {
                 script {
+                    def imageTag = readFile('image-tag.txt').trim()
+
                     def healthFail = 'false'
 
                     if (params.VERSION == '4.2.2') {
@@ -142,9 +149,14 @@ pipeline {
                         echo 'FAILURE INJECTION ENABLED for v4.2.2'
                     }
 
+                    echo "Starting candidate image: ${imageTag}"
+
                     powershell """
                         & "\${env:DOCKER_EXE}" rm -f retail-app-candidate
+                        exit 0
+                    """
 
+                    powershell """
                         & "\${env:DOCKER_EXE}" run -d `
                             --name retail-app-candidate `
                             --network retail-network `
@@ -152,9 +164,7 @@ pipeline {
                             -e APP_VERSION=${params.VERSION} `
                             -e ENVIRONMENT=${params.ENVIRONMENT} `
                             -e HEALTH_FAIL=${healthFail} `
-                            ${env.IMAGE_TAG}
-
-                        exit 0
+                            ${imageTag}
                     """
                 }
             }
@@ -185,20 +195,27 @@ pipeline {
 
         stage('Deploy New Version') {
             steps {
-                powershell """
-                    & "\${env:DOCKER_EXE}" rm -f retail-app-prod
+                script {
+                    def imageTag = readFile('image-tag.txt').trim()
 
-                    & "\${env:DOCKER_EXE}" run -d `
-                        --name retail-app-prod `
-                        --network retail-network `
-                        -p 8081:8081 `
-                        -e APP_VERSION=${params.VERSION} `
-                        -e ENVIRONMENT=${params.ENVIRONMENT} `
-                        -e HEALTH_FAIL=false `
-                        ${env.IMAGE_TAG}
+                    echo "Deploying production image: ${imageTag}"
 
-                    exit 0
-                """
+                    powershell """
+                        & "\${env:DOCKER_EXE}" rm -f retail-app-prod
+                        exit 0
+                    """
+
+                    powershell """
+                        & "\${env:DOCKER_EXE}" run -d `
+                            --name retail-app-prod `
+                            --network retail-network `
+                            -p 8081:8081 `
+                            -e APP_VERSION=${params.VERSION} `
+                            -e ENVIRONMENT=${params.ENVIRONMENT} `
+                            -e HEALTH_FAIL=false `
+                            ${imageTag}
+                    """
+                }
             }
         }
 
@@ -236,11 +253,12 @@ pipeline {
 
         stage('Final Status') {
             steps {
-                echo 'Deployment completed successfully.'
-                echo "Version deployed: ${params.VERSION}"
-                echo "Docker image: ${env.IMAGE_TAG}"
+                echo '======================================'
+                echo 'DEPLOYMENT SUCCESSFUL'
+                echo "Version: ${params.VERSION}"
                 echo "Environment: ${params.ENVIRONMENT}"
                 echo 'Final status: SUCCESS'
+                echo '======================================'
             }
         }
     }
@@ -266,7 +284,10 @@ pipeline {
 
                     powershell """
                         & "\${env:DOCKER_EXE}" rm -f retail-app-prod
+                        exit 0
+                    """
 
+                    powershell """
                         & "\${env:DOCKER_EXE}" run -d `
                             --name retail-app-prod `
                             --network retail-network `
@@ -275,8 +296,6 @@ pipeline {
                             -e ENVIRONMENT=PRODUCTION `
                             -e HEALTH_FAIL=false `
                             ${env.PREVIOUS_IMAGE}
-
-                        exit 0
                     """
 
                     sleep(time: 10, unit: 'SECONDS')
@@ -296,15 +315,13 @@ pipeline {
                         echo 'Previous production image is HEALTHY'
                         echo '======================================'
                     } else {
-                        echo '======================================'
-                        echo 'ROLLBACK HEALTH CHECK FAILED'
-                        echo '======================================'
+                        echo 'ROLLBACK HEALTH CHECK FAILED.'
                     }
 
                 } else {
 
-                    echo 'No previous production image was recorded.'
-                    echo 'Rollback cannot be performed.'
+                    echo 'No previous production image exists.'
+                    echo 'This was the first deployment, so there is nothing to rollback to.'
                 }
 
                 echo 'Final status: FAILED'
@@ -312,9 +329,7 @@ pipeline {
         }
 
         success {
-            echo '======================================'
             echo 'FINAL STATUS: SUCCESS'
-            echo '======================================'
         }
     }
 }
