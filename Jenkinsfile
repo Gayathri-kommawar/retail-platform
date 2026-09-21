@@ -58,7 +58,7 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 powershell """
-                    docker build -t retail-app:${params.VERSION}-${env.BUILD_NUMBER} .
+                   & "$env:DOCKER_PATH\docker.exe" build -t retail-app:${params.VERSION}-${env.BUILD_NUMBER} . 
                 """
             }
         }
@@ -66,7 +66,7 @@ pipeline {
         stage('Show Docker Image') {
             steps {
                 powershell """
-                    docker images retail-app
+                    & "$env:DOCKER_PATH\docker.exe" images retail-app
                 """
             }
         }
